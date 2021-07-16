@@ -1,0 +1,1046 @@
+---
+title: 'Oral Prep: Summary tables'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+rm(list = ls())
+
+#library(iml)
+library(pdp)
+library(caret)
+library(expss)
+library(writexl)
+library(readxl)
+library(corrr)
+library(rlang)
+library(tidyverse)
+```
+
+Constants.
+
+```{r}
+ROUND <- 2
+```
+
+# DATA IMPORTATION
+
+```{r}
+data_sav <-
+  haven::read_sav(file = "../inputs/Source Data/Oral PrEP  survey v5_WIDE.sav") %>%
+  map_df(.f = ~expss::na_if(x = ., value = "", with_labels = TRUE))
+
+data_dictionary <- create_dictionary(x = data_sav)
+
+data_raw <-
+  read_excel("../inputs/Behavioural Scoring/Clean_data_scored1_3Clusters_v2.xlsx", 
+             na = "NA") %>% 
+  select(-1)
+
+
+data_sav
+data_dictionary
+data_raw
+```
+
+## Validate
+
+Validate that the segments I have are the same as what's in the report.
+
+I recommended 3 segments per population but the report contains 2 segments per population. This work was likely done by Peter prior to me getting involved. We will focus only on the behavioral scores since my involvement was from there.
+
+```{r}
+data_raw %>% 
+  group_by(Population, b_segment) %>% 
+  summarise(age = median(clean_age, na.rm = TRUE))
+```
+
+This is the work that Peter had done. It shows that FSW had 4 segments but the report has 2 segments.
+
+```{r}
+data_pk <- readRDS(file = "../inputs/Source Data/Segments_PK.rds")
+
+data_pk %>% 
+  group_by(Population, Segment) %>% 
+  summarise(age = mean(clean_age, na.rm = TRUE))
+```
+
+## Add data labels
+
+```{r}
+surv_cols <- tibble(surv_cols = data_raw %>% colnames())
+
+surv_cols
+data_dictionary
+```
+
+
+```{r}
+surv_cols <-
+surv_cols %>% 
+  mutate(variable = str_extract(string = surv_cols, 
+                                pattern = "q.*$")) %>% 
+  mutate(variable = coalesce(variable, surv_cols))
+
+surv_cols
+```
+
+Retrieve data labels.
+
+Behaviour labels.
+
+```{r}
+behave_vars <- read_excel(path = "../inputs/Source Data/behave_labels.xlsx")
+
+behave_vars <-
+behave_vars %>% 
+  rename(surv_cols = variable)
+
+behave_vars
+```
+
+
+```{r}
+surv_labels <-
+surv_cols %>% 
+  left_join(data_dictionary, by = "variable") %>% 
+  group_by(surv_cols) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  left_join(behave_vars, by = "surv_cols") %>% 
+  mutate(label = coalesce(label.x, label.y)) %>% 
+  select(surv_cols, variable, label)
+
+surv_labels %>% filter(!is.na(label))
+```
+
+
+## Add labels to raw_data
+
+```{r}
+data_labeled <- tibble(.rows = 597)
+
+for (i in seq_along(colnames(data_raw))){
+  labeled_col <- set_var_lab(x = data_raw %>% select(i), value = surv_labels$label[i])
+  data_labeled <- bind_cols(data_labeled, labeled_col)
+}
+
+data_labeled
+```
+
+## Clarifications
+
+Why is this question is repeated severally? These seem to be the same questions in a randomised order.
+
+```{r}
+data_proc %>% 
+  select(contains("q117"))
+```
+
+What do these numbers mean? This is a bean game. The second question is a counterfactual to the first one.
+
+```{r}
+data_proc %>% 
+  select(contains("q147"))
+```
+
+
+## Identifying questions 
+
+Questions ending with `_[0-9]{,2}` are subquestions.
+
+```{r}
+sub_questions <- 
+  grepl(pattern = "_\\d+$", 
+        x = colnames(data_proc), 
+        ignore.case = TRUE)
+
+length(sub_questions)
+```
+
+```{r}
+questions <- colnames(data_proc)[!sub_questions]
+
+data_questions <- data_proc %>% select(questions)
+
+data_questions
+```
+
+# SUMMARY STATS
+
+*I am realising that the segments that are shared in this report are different from the work that Peter had done and the work that I had re-done, and I don't have a view of what changed in between to arrive at these particular segments in the report. If we are to include information concerning the segments, we will need to retrieve that particular document containing the final segments per participant.*
+
+## Excluded variables
+
+### Too many unique values
+
+These are an indicator of open ended questions.
+
+* Clinic selection has 19 options.
+* The rest have at most 15 options.
+
+```{r}
+#skim_results <- skimr::skim(drop_var_labs(data_questions)) %>% as_tibble()
+
+skim_results <- skimr::skim(data_raw) %>% as_tibble()
+```
+
+
+```{r}
+vars_many <-
+skim_results %>% 
+  filter(character.n_unique > 15) %>% 
+  pull(skim_variable)
+
+vars_many
+```
+
+
+### Identifier variables
+
+```{r}
+data_raw %>% 
+  select(-all_of(vars_many))
+```
+
+
+```{r}
+vars_id <- 
+c("Client_ID",
+"SubmissionDate",
+"starttime",
+"endtime",
+"deviceid",
+"subscriberid",
+"simid",
+"devicephonenum",
+"enum",
+"cal222",
+"calc233",
+"cal888",
+"e1demoq9",
+"e1end11e2calc_4",
+"formdef_version",
+"Age",
+"e1end11e2sxrepeat__count")
+
+vars_id
+```
+
+### Excluded
+
+```{r}
+vars_exclude <- unique(c(vars_many, vars_id))
+
+vars_exclude
+
+data_raw %>% 
+  select(-any_of(vars_exclude))
+```
+
+## Variables remaining
+
+These are the variables that will be analysed.
+
+* b_score : Behavioural score for each participant
+* b_segment : Key Populations split into 3 segments each
+
+```{r}
+data_final <- data_raw %>% select(-any_of(vars_exclude))
+
+# data_final$b_score <- data_bscores$b_score
+# data_final$b_segment <- data_bscores$b_segment
+
+data_final
+```
+
+
+## Frequency results
+
+Including NA responses.
+
+```{r}
+freq_results <-
+ data_proc %>% 
+  select_if(.predicate = is.character) %>% 
+  map_df(.f = ~count(x = data.frame(response = .), 
+                     response),
+         .id = "variable") %>% 
+  mutate(records = nrow(data_raw)) %>% 
+  group_by(variable) %>% 
+  mutate(prop = n/records) %>% 
+  mutate(total_prop = sum(prop))
+
+freq_results %>% 
+  mutate(prop = scales::percent(x = prop, accuracy = 0.01))
+```
+
+
+## Mean, medians
+
+```{r}
+means_medians <-
+data_proc %>% 
+  select_if(.predicate = is.numeric) %>% 
+  summarise(across(.cols = everything(), 
+                   .fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               median = ~median(x = ., na.rm = TRUE)))) %>% 
+  pivot_longer(cols = everything()) %>% 
+  extract(col = name,
+          into = c("variable","measure"),
+          regex = "(.*)_(\\w+)") %>% 
+  pivot_wider(id_cols = variable,
+              names_from = measure,
+              values_from = value) %>% 
+  mutate(across(.cols = c(mean, median), 
+                .fns = ~round(x = ., ROUND)))
+
+means_medians
+```
+
+## Nulls and distinct
+
+```{r}
+nulls_distinct <-
+data_proc %>% 
+  summarise(across(.cols = everything(), 
+                   .fns = list(distinct = n_distinct,
+                               nulls = ~sum(is.na(.))))) %>% 
+  pivot_longer(cols = everything()) %>% 
+  extract(col = name,
+          into = c("variable","measure"),
+          regex = "(.*)_(\\w+)") %>% 
+  pivot_wider(id_cols = variable,
+              names_from = measure,
+              values_from = value) %>% 
+  mutate(records = nrow(data_proc),
+         prop_nulls = nulls/records,
+         prop_nulls = round(prop_nulls, ROUND))
+
+nulls_distinct
+```
+
+
+
+# BEHAVIORAL SCORING
+
+Because the segments that are in the report are different from what Peter or I did, we will focus analysis on behavioral scoring but not bring in segment conversation until we have the final segments that are in the report.
+
+## Process overview
+
+* Data preparation (variable selection)
+* Predict continuation rates
+* Evaluate accuracy of prediction of continuation rates
+* Calculate behavioural score
+
+## Data preparation
+
+Importation
+
+```{r}
+load("../inputs/Behavioural Scoring/b_score_model.RData")
+
+dim(df)
+```
+
+Removed variables with NAs
+
+```{r}
+sum(colSums(is.na(df))>0)
+
+sum(colSums(is.na(df))==0)
+```
+
+Removed screeners, identifiers, survey running totals, survey calculations
+
+```{r}
+id_cols <- c("SubmissionDate","starttime","endtime","deviceid","enum","cal222","calc233","metainstanceID","formdef_version","KEY","SubmissionDate2","pasted","pasted2","df","Age","q13","e1end11e2Cons_rand_calc_1","e1end11e2Cons_rand_calc_2","e1end11e2calc_3","q16","e1end11e2bean_bean1calc_bean","e1end11e2bean_bean2calc_bean2","e1end11e2bean_bean3calc_bean3","e1end11e2bean_bean4calc_bean4","e1end11e2bean_bean5calc_bean5","e1demoq9","e1end11e2bean_bean6calc_bean6","e1end11e2calc_4","cal888","Continuation_rates_dummy","e1demoq12","e1demoend1cp","Client_ID","e1end11e2bean_bean1q146b","e1end11e2bean_bean2q147b","e1end11e2bean_bean3q148b","e1end11e2bean_bean4q149b","e1end11e2bean_bean6q151b")
+
+length(unique(id_cols))
+```
+
+Removed constant columns
+
+```{r}
+length(Near_zero)
+```
+
+Categorical variables with too many levels - None were identified.
+
+```{r}
+data.frame(catvar_type) %>% 
+  count(X2) %>% 
+  mutate(X2 = as.numeric(X2)) %>% 
+  arrange(-X2)
+```
+
+Removed multi-collinear variables - None were identified.
+
+```{r}
+library(corrr)
+
+num_vars %>% 
+  correlate() %>% 
+  shave() %>% 
+  pivot_longer(cols = -term,
+               names_to = "variable",
+               values_to = "correlation") %>% 
+  arrange(desc(correlation))
+```
+
+```{r}
+dim(final_clean)
+```
+
+
+## Which model was used?
+
+A random forest with 28 predictors was used.
+
+```{r}
+model_rf_wr
+```
+
+## How did we select the 28 variables?
+
+```{r}
+model_rf_2
+```
+
+There is a sudden steep drop in important after variable number 28.
+
+```{r}
+varImp(object = model_rf_2)$importance %>% 
+  rownames_to_column("variable") %>% 
+  arrange(desc(Overall)) %>% 
+  left_join(surv_labels, by = c("variable"="surv_cols")) %>% 
+  select(variable, Overall, label)
+#  write_xlsx(path = "../outputs/var_imp.xlsx")
+```
+
+## Variable importance
+
+```{r}
+varImp(object = model_rf_2)$importance %>% 
+  arrange(desc(Overall)) %>% 
+  head(35) %>% 
+  rownames_to_column("variable") %>% 
+  mutate(variable = fct_reorder(variable, Overall)) %>% 
+  ggplot(aes(x = variable, y = Overall)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Variable importance plot",
+       subtitle = "28 most important variables in the Random Forest",
+       x = NULL) +
+  geom_vline(xintercept = "little_chance", lty = 2)
+```
+
+## How accurate was the behavioural scoring model?
+
+Confusion matrix.
+
+```{r}
+pred_classes <- predict(object = model_rf_wr, newdata = final_clean, type = "raw")
+pred_probs <- predict(object = model_rf_wr, newdata = final_clean, type = "prob")
+```
+
+
+```{r}
+identical(as.character(final_clean$Population), data_raw$Population)
+```
+
+The model was 100% accurate on the test set. **In terms of assigning behavioural scores to survey participants, these are the scores that were assigned** hence these results are still useful. However, a validation set was introduced when it can to deploying the predictive tool. **The deployed model will also be evaluated on its own and these two results tied together.**
+
+```{r}
+confusionMatrix(data = pred_classes, reference = final_clean$Continuation_rates)
+```
+
+## Behavioural scores per population
+
+
+```{r}
+b_scores <-
+pred_probs %>% 
+  mutate(b_score = Continuation.3 + Continuation.2,
+         b_score = round(b_score*1000)) %>% 
+  pull(b_score)
+
+b_scores[1:10]
+```
+
+
+```{r}
+bscore_summaries <-
+data_raw %>% 
+  mutate(b_score = b_scores) %>% 
+  select(Population, b_score) %>% 
+  group_by(Population) %>%
+  summarise(min_score = min(b_score),
+            mean_score = mean(b_score),
+            max_score = max(b_score),
+            median_score = median(b_score),
+            pop = n()) %>% 
+  arrange(mean_score)
+
+bscore_summaries
+
+bscore_summaries %>% 
+  mutate(Population = fct_reorder(Population, mean_score)) %>% 
+  ggplot(aes(x = Population, y = mean_score)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = min_score, ymax = max_score), width = 0.2) +
+  geom_text(aes(label = min_score, y = min_score), vjust = 1) +
+  geom_text(aes(label = max_score, y = max_score), vjust = -0.5) +
+  geom_text(aes(label = round(mean_score), y = mean_score)) +
+  labs(title = "Summary of behavioural scores",
+       subtitle = "Indicating the mean, max, and min scores",
+       x = NULL,
+       y = "Behavioural score")
+```
+
+
+## SHAP values
+
+**This approach was not used as the results were not easy to interpret especially for continuous variables.**
+
+Useful for understanding the direction of influence of features
+
+```{r}
+data_train <- final_clean[,names(final_clean) %in% c(imp_vars_wrapper,"Continuation_rates")]
+data_train <- cbind(data_train, b_score = data_raw$b_score/1000)
+
+data_train_x <- data_train %>% select(-Continuation_rates, -b_score)
+
+data_train_lo <- data_train %>% filter(Continuation_rates=="No.continuation") %>% select(-Continuation_rates, -b_score)
+
+data_train_hi <- data_train %>% filter(Continuation_rates=="Continuation.3") %>% select(-Continuation_rates, -b_score)
+```
+
+
+```{r}
+# :class: name of the class we are interested in. Leave blank to get all classes
+
+shap_predictor <-
+Predictor$new(model = model_rf_wr,
+              data = data_train %>% select(-b_score),
+              y = "Continuation_rates",
+              class = c("No.continuation"),
+              type = "prob")
+
+shap_predictor
+```
+
+
+```{r}
+system.time({
+
+doParallel::registerDoParallel(cores = parallel::detectCores())
+
+# shap_res_low <-
+# Shapley$new(predictor = shap_predictor, 
+#             x.interest = data_train_lo,
+#             sample.size = 5)
+
+shap_res_low <-
+Shapley$new(predictor = shap_predictor, 
+            x.interest = data_train_lo,
+            sample.size = 50)
+
+shap_res_high <-
+Shapley$new(predictor = shap_predictor, 
+            x.interest = data_train_hi,
+            sample.size = 50)
+
+doParallel::stopImplicitCluster()
+
+})
+```
+
+What does Age=24 or Age=18 mean?
+
+```{r}
+library(patchwork)
+
+plot_low <- plot(shap_res_low)
+plot_high <- plot(shap_res_high)
+
+plot_low
+plot_high
+```
+
+
+
+```{r}
+library(tidytext)
+
+shap_res$results %>% 
+  mutate(feature.value = reorder_within(feature.value, phi, class)) %>% 
+  ggplot(aes(x = feature.value, y = abs(phi))) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~class, "free") +
+  scale_x_reordered()
+```
+
+## PDP plots
+
+### Trials
+
+```{r eval=FALSE, include=FALSE}
+partial(object = model_rf_wr, 
+        pred.var = "clean_age", 
+        which.class = "No.continuation", 
+        plot = TRUE, 
+        plot.engine = "ggplot2", 
+        smooth = TRUE) +
+  labs(title = "PDP for Age on No Continuation")
+
+
+partial(object = model_rf_wr, 
+        pred.var = "clean_age", 
+        which.class = "Continuation.3", 
+        plot = TRUE, 
+        plot.engine = "ggplot2", 
+        smooth = TRUE) +
+  labs(title = "PDP for Age on Continuation 3")
+
+partial(object = model_rf_wr, 
+        pred.var = "Clinic", 
+        which.class = "Continuation.3", 
+        plot = FALSE, 
+        plot.engine = "ggplot2", 
+        smooth = TRUE) %>% 
+  as_tibble() %>% 
+  mutate(Clinic = fct_reorder(Clinic, desc(yhat))) %>% 
+  ggplot(aes(x = Clinic, y = yhat)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "PDP for Age on Continuation 3")
+  
+```
+
+
+```{r eval=FALSE, include=FALSE}
+plot_pdp <- function(model, continuation_rate, variable){
+  
+  pdp_plots <- list()
+  
+  pdp_plot <-
+  partial(object = {{ model }}, 
+          pred.var = variable, 
+          which.class = continuation_rate, 
+          plot = TRUE, 
+          plot.engine = "ggplot2") +
+  geom_smooth(method = "loess", se = TRUE) +
+  labs(title = glue::glue("PDP for {variable} on {continuation_rate}"))
+  
+  pdp_plots[[1]] <- pdp_plot
+  
+  return(pdp_plots)
+}
+
+pdp_plots <- plot_pdp(model = model_rf_wr, continuation_rate = "Continuation.3", variable = "clean_age")
+
+pdp_plots[[1]]
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+plot_pdp <- function(model, continuation_rate, variable){
+  
+  pdp_plots <- list()
+  
+  pdp_plot <-
+  partial(object = {{ model }}, 
+          pred.var = variable, 
+          which.class = continuation_rate, 
+          plot = FALSE, 
+          plot.engine = "ggplot2", 
+          smooth = TRUE) %>% 
+  as_tibble() %>% 
+  mutate({{ variable}} := fct_reorder(.data[[variable]], yhat)) %>%  
+  ggplot(aes(x = .data[[variable]], y = yhat)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = glue::glue("PDP for {variable} on {continuation_rate}"),
+       x = NULL)
+  
+  pdp_plots[[1]] <- pdp_plot
+  
+  return(pdp_plots)
+}
+
+pdp_plots <- plot_pdp(model = model_rf_wr, continuation_rate = "No.continuation", variable = "Clinic")
+
+pdp_plots[1]
+```
+
+
+### Variables list
+
+Define a nested list of variables and their class.
+
+```{r}
+model_vars <-
+final_clean %>% 
+  select(all_of(imp_vars_wrapper)) %>% 
+  summarise(across(.cols = everything(), .fns = class)) %>% 
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "class") %>% 
+  mutate(vars = map2(.x = variable, .y = class, .f = list)) %>% 
+  pull(vars)
+
+length(model_vars)
+```
+
+
+```{r}
+model_vars[1]
+
+model_vars[[1]][1]
+
+unlist(model_vars[[1]][2])
+
+class(unlist(model_vars[[1]][2]))
+
+unlist(model_vars[[1]][2])=="factor"
+```
+
+### Plotting function
+
+This will return just one plot for a given to be stored in a list later.
+
+```{r}
+# model: a trained model
+# continuation rate: a outcome in the outcome variable
+# model vars: a nested list containing an independent variable and its class
+# returns: a named list containing a single plot, its table, and continuation rate being observed
+
+plot_pdp <- function(model, continuation_rate, model_vars){
+  
+  variable <- unlist(model_vars[[1]][1])
+  class <- unlist(model_vars[[1]][2])
+  
+  if (class == "factor"){
+    
+    pdp_plot <-
+    pdp::partial(object = {{ model }},
+            pred.var = variable,
+            which.class = continuation_rate,
+            plot = FALSE,
+            plot.engine = "ggplot2") %>%
+    as_tibble() %>%
+    mutate({{ variable}} := fct_reorder(.data[[variable]], yhat)) %>%
+    ggplot(aes(x = .data[[variable]], y = yhat)) +
+    geom_col() +
+    coord_flip() +
+    labs(title = glue::glue("PDP for {variable} on {continuation_rate}"),
+         x = NULL)
+
+  } else {
+
+  pdp_plot <-
+  pdp::partial(object = {{ model }},
+          pred.var = variable,
+          which.class = continuation_rate,
+          plot = TRUE,
+          plot.engine = "ggplot2") +
+  geom_smooth(method = "loess", se = TRUE, formula = y ~ x) +
+  labs(title = glue::glue("PDP for {variable} on {continuation_rate}"))
+
+  }
+  
+  pdp_tbl <-
+    pdp::partial(object = {{ model }},
+            pred.var = variable,
+            which.class = continuation_rate,
+            plot = FALSE,
+            plot.engine = "ggplot2") %>%
+    as_tibble() %>% 
+    mutate({{ variable}} := as.character(.data[[variable]]))
+
+
+  pdp_plots <- list(plt = pdp_plot,
+                    tbl = pdp_tbl,
+                    rate = continuation_rate)
+  
+  return(pdp_plots)
+}
+```
+
+
+```{r}
+pdp_plots <- plot_pdp(model = model_rf_wr, continuation_rate = "No.continuation", model_vars = model_vars[2])
+
+pdp_plots$plt
+
+pdp_plots$tbl
+
+pdp_plots$rate
+```
+
+
+### Obtain PDP results
+
+This will take the returned named list and store it in a list.
+
+```{r}
+doParallel::registerDoParallel(cores = 2)
+
+pdp_res <- list()
+
+for (var in seq_along(model_vars)){
+pdp_res[[var]] <- plot_pdp(model = model_rf_wr, 
+                         continuation_rate = "No.continuation",
+                         model_vars = model_vars[var])
+}
+
+doParallel::stopImplicitCluster()
+
+length(pdp_res)
+```
+
+
+### Print plots
+
+Iterate over the list of results and print each plot.
+
+```{r}
+doParallel::registerDoParallel(cores = parallel::detectCores())
+
+for (res in seq_along(pdp_res)){
+  suppressWarnings(print(pdp_res[[res]]$plt))
+}
+
+doParallel::stopImplicitCluster()
+```
+
+
+### Print both tables and plots
+
+```{r}
+doParallel::registerDoParallel(cores = parallel::detectCores())
+
+for (res in seq_along(pdp_res[1:2])){
+  suppressWarnings(print(pdp_res[[res]]))
+}
+
+doParallel::stopImplicitCluster()
+```
+
+
+### Concatenated tables
+
+```{r}
+pdp_tbls <- tibble(.rows = 0)
+
+for (var in seq_along(pdp_res)){
+  pdp_df <- 
+    pdp_res[[var]]$tbl %>% 
+    mutate(variable = colnames(.)[1]) %>% 
+    mutate(rate = pdp_res[[var]]$rate) %>% 
+    setNames(object = ., nm = c("response","yhat","variable","continuation_rate"))
+  
+  pdp_tbls <- rbind(pdp_tbls, pdp_df)
+}
+
+pdp_tbls
+```
+
+```{r}
+write_xlsx(pdp_tbls,"../outputs/pdp_res_tbl_no.xlsx")
+```
+
+### Previous
+
+```{r eval=FALSE, include=FALSE}
+pdp_tbl <- function(model, continuation_rate, model_vars){
+  
+  variable <- unlist(model_vars[[1]][1])
+  
+  pdp_df <-
+    pdp::partial(object = {{ model }}, 
+            pred.var = variable, 
+            which.class = continuation_rate, 
+            plot = FALSE, 
+            plot.engine = "ggplot2") %>% 
+    as_tibble() %>% 
+    mutate(variable = {{ variable }}) %>% 
+    rename(response = {{ variable }}) %>% 
+    mutate(response = as.character(response)) %>% 
+    mutate(continuation_rate = {{ continuation_rate }})
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+doParallel::registerDoParallel(cores = parallel::detectCores())
+
+pdp_res_tbl <- tibble(.rows = 0)
+
+for (var in seq_along(model_vars)){
+  pdp_df <- pdp_tbl(model = model_rf_wr, 
+                    continuation_rate = "Continuation.3", 
+                    model_vars = model_vars[var])
+  pdp_res_tbl <- rbind(pdp_res_tbl, pdp_df)
+}
+
+doParallel::stopImplicitCluster()
+```
+
+
+```{r eval=FALSE, include=FALSE}
+pdp_res_tbl %>% 
+  group_by(variable) %>% 
+  arrange(desc(yhat), .by_group = TRUE) %>% 
+  filter(variable=="Clinic")
+```
+
+## Sense checks
+
+* Older people are in Continuation 3, younger people in Continuation 1
+* People in Migori & Nyamari are likely to be in No continuation category
+
+```{r}
+data_train %>% 
+  group_by(Continuation_rates) %>% 
+  summarise(age = mean(clean_age))
+
+data_train %>% 
+  group_by(Continuation_rates, Clinic) %>% 
+  summarise(n = n()) %>%
+  arrange(Continuation_rates, desc(n))
+```
+
+
+# PREDICTIVE TOOL
+
+## Load data
+
+Image that was used to arrive at the final 10 features on the predictive tool.
+
+```{r}
+rm(list = ls())
+
+load("../inputs/Wrapper Methods/oral_prep_final_model_ensemble_ft_eng_v3.RData")
+```
+
+## Which model was used?
+
+Different algorithms were applied and ensembled using a neural network.
+
+4 base models (ct,rf,svmR,svmP) + nnet
+
+## How accurate was the model?
+
+Had an accuracy of 70% in predicting Low Continuation.
+
+```{r}
+conf_matrix <- confusionMatrix(data = preds_ens_nnet$cont_ens_nnet.th, reference = model_probs_te$Continuation_rates)
+
+conf_matrix
+# Terms:
+# Sensitivity= 20/37=Accuracy of predicting high cont
+# Specificity= 57/81=Accuracy of predicting low cont
+```
+
+```{r}
+conf_matrix$table
+```
+
+
+## Variable importnce
+
+```{r}
+plot_imp <- function(df, top, name){
+  
+  var_imp_df <-
+  df %>% 
+  select(any_of(c("Overall", "Overall" = "High_Continuation"))) %>% 
+  rownames_to_column("variable") %>% 
+  extract(col = variable,
+          into = c("question","resp"),
+          regex = "(.*)_(.*)",
+          remove = FALSE) %>% 
+  arrange(desc(Overall))
+  
+  var_imp_plot <-
+  var_imp_df %>% 
+  head(top) %>% 
+  mutate(variable = fct_reorder(variable, Overall)) %>% 
+  ggplot(aes(x = variable, y = Overall)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = glue::glue("{name}: Variable importance plot"),
+       subtitle = glue::glue("{top} most important variables that influence continuation rates"),
+       x = NULL,
+       y = "Importance") +
+    theme(plot.title.position = "plot")
+  
+  writexl::write_xlsx(x = var_imp_df,
+                      path = glue::glue("../outputs/{name}.xlsx"))
+  
+  return(list(tbl = var_imp_df, 
+              plt = var_imp_plot))
+    
+}
+```
+
+
+### SVMRadial
+
+Support Vector Machine with a Radial kernel.
+
+```{r}
+plot_imp(df = varImp(model_svmR_ft_all)$importance,
+         top = 20,
+         name = "SVM Radial")
+```
+
+### SVMPoly
+
+Support Vector Machine with Polynomial kernel.
+
+```{r}
+plot_imp(df = varImp(model_svmP_ft_all)$importance,
+         top = 20,
+         name = "SVM Poly")
+```
+
+### CTree
+
+Conditional Inference Tree
+
+```{r}
+plot_imp(df = varImp(model_ct_ft_all)$importance,
+         top = 20,
+         name = "C Tree")
+```
+
+### Random Forest
+
+Random Forest
+
+```{r}
+plot_imp(df = varImp(model_rf_ft_all)$importance,
+         top = 20,
+         name = "Random Forest")
+```
+
+
+# EXPORT
+
+```{r}
+save.image("../outputs/16July.RData")
+#load("../outputs/15July.RData")
+```
+
+
+
