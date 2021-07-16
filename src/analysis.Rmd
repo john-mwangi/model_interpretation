@@ -1,6 +1,7 @@
 ---
 title: 'Oral Prep: Summary tables'
 output: html_document
+author: "John Mwangi"
 ---
 
 ```{r setup, include=FALSE}
@@ -589,99 +590,6 @@ shap_res$results %>%
 
 ## PDP plots
 
-### Trials
-
-```{r eval=FALSE, include=FALSE}
-partial(object = model_rf_wr, 
-        pred.var = "clean_age", 
-        which.class = "No.continuation", 
-        plot = TRUE, 
-        plot.engine = "ggplot2", 
-        smooth = TRUE) +
-  labs(title = "PDP for Age on No Continuation")
-
-
-partial(object = model_rf_wr, 
-        pred.var = "clean_age", 
-        which.class = "Continuation.3", 
-        plot = TRUE, 
-        plot.engine = "ggplot2", 
-        smooth = TRUE) +
-  labs(title = "PDP for Age on Continuation 3")
-
-partial(object = model_rf_wr, 
-        pred.var = "Clinic", 
-        which.class = "Continuation.3", 
-        plot = FALSE, 
-        plot.engine = "ggplot2", 
-        smooth = TRUE) %>% 
-  as_tibble() %>% 
-  mutate(Clinic = fct_reorder(Clinic, desc(yhat))) %>% 
-  ggplot(aes(x = Clinic, y = yhat)) +
-  geom_col() +
-  coord_flip() +
-  labs(title = "PDP for Age on Continuation 3")
-  
-```
-
-
-```{r eval=FALSE, include=FALSE}
-plot_pdp <- function(model, continuation_rate, variable){
-  
-  pdp_plots <- list()
-  
-  pdp_plot <-
-  partial(object = {{ model }}, 
-          pred.var = variable, 
-          which.class = continuation_rate, 
-          plot = TRUE, 
-          plot.engine = "ggplot2") +
-  geom_smooth(method = "loess", se = TRUE) +
-  labs(title = glue::glue("PDP for {variable} on {continuation_rate}"))
-  
-  pdp_plots[[1]] <- pdp_plot
-  
-  return(pdp_plots)
-}
-
-pdp_plots <- plot_pdp(model = model_rf_wr, continuation_rate = "Continuation.3", variable = "clean_age")
-
-pdp_plots[[1]]
-```
-
-
-
-```{r eval=FALSE, include=FALSE}
-plot_pdp <- function(model, continuation_rate, variable){
-  
-  pdp_plots <- list()
-  
-  pdp_plot <-
-  partial(object = {{ model }}, 
-          pred.var = variable, 
-          which.class = continuation_rate, 
-          plot = FALSE, 
-          plot.engine = "ggplot2", 
-          smooth = TRUE) %>% 
-  as_tibble() %>% 
-  mutate({{ variable}} := fct_reorder(.data[[variable]], yhat)) %>%  
-  ggplot(aes(x = .data[[variable]], y = yhat)) +
-  geom_col() +
-  coord_flip() +
-  labs(title = glue::glue("PDP for {variable} on {continuation_rate}"),
-       x = NULL)
-  
-  pdp_plots[[1]] <- pdp_plot
-  
-  return(pdp_plots)
-}
-
-pdp_plots <- plot_pdp(model = model_rf_wr, continuation_rate = "No.continuation", variable = "Clinic")
-
-pdp_plots[1]
-```
-
-
 ### Variables list
 
 Define a nested list of variables and their class.
@@ -856,51 +764,6 @@ pdp_tbls
 
 ```{r}
 write_xlsx(pdp_tbls,"../outputs/pdp_res_tbl_no.xlsx")
-```
-
-### Previous
-
-```{r eval=FALSE, include=FALSE}
-pdp_tbl <- function(model, continuation_rate, model_vars){
-  
-  variable <- unlist(model_vars[[1]][1])
-  
-  pdp_df <-
-    pdp::partial(object = {{ model }}, 
-            pred.var = variable, 
-            which.class = continuation_rate, 
-            plot = FALSE, 
-            plot.engine = "ggplot2") %>% 
-    as_tibble() %>% 
-    mutate(variable = {{ variable }}) %>% 
-    rename(response = {{ variable }}) %>% 
-    mutate(response = as.character(response)) %>% 
-    mutate(continuation_rate = {{ continuation_rate }})
-}
-```
-
-
-```{r eval=FALSE, include=FALSE}
-doParallel::registerDoParallel(cores = parallel::detectCores())
-
-pdp_res_tbl <- tibble(.rows = 0)
-
-for (var in seq_along(model_vars)){
-  pdp_df <- pdp_tbl(model = model_rf_wr, 
-                    continuation_rate = "Continuation.3", 
-                    model_vars = model_vars[var])
-  pdp_res_tbl <- rbind(pdp_res_tbl, pdp_df)
-}
-
-doParallel::stopImplicitCluster()
-```
-
-
-```{r eval=FALSE, include=FALSE}
-pdp_res_tbl %>% 
-  group_by(variable) %>% 
-  arrange(desc(yhat), .by_group = TRUE) %>% 
-  filter(variable=="Clinic")
 ```
 
 ## Sense checks
