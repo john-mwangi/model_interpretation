@@ -489,11 +489,13 @@ data_raw %>%
   arrange(mean_score)
 
 bscore_summaries
+#bscore_summaries %>% write_xlsx("../outputs/bscore_summaries.xlsx")
 
 bscore_summaries %>% 
   mutate(Population = fct_reorder(Population, mean_score)) %>% 
   ggplot(aes(x = Population, y = mean_score)) +
   geom_col() +
+  geom_hline(yintercept = 500, lty = 2) +
   geom_errorbar(aes(ymin = min_score, ymax = max_score), width = 0.2) +
   geom_text(aes(label = min_score, y = min_score), vjust = 1) +
   geom_text(aes(label = max_score, y = max_score), vjust = -0.5) +
@@ -502,6 +504,86 @@ bscore_summaries %>%
        subtitle = "Indicating the mean, max, and min scores",
        x = NULL,
        y = "Behavioural score")
+```
+
+## Segments
+
+Each population was split into 2 clusters per population.
+
+```{r}
+# Formular to replicate
+cutree(tree = hclust(d = dist(x = b_scores, method = "euclidean"), method = "ward.D2"), 
+       k = 2)[1:20]
+```
+
+Create a nested tibble containing the results of the segmentation (tree, segments)
+
+```{r}
+pop_segments <-
+data_raw %>% 
+  select(Client_ID,Population) %>% 
+  mutate(b_score = b_scores) %>% 
+  group_by(Population) %>% 
+  nest() %>% 
+  mutate(tree = map(.x = data, .f = ~hclust(d = dist(x = .$b_score, method = "euclidean"), method = "ward.D2"))) %>% 
+  mutate(segments = map(.x = tree, .f = ~cutree(tree = ., k = 2))) %>% 
+  mutate(data = map(.x = data, .f = ~mutate(.data = ., segment = segments[[1]]))) %>% 
+  ungroup()
+
+pop_segments
+```
+
+## Behavioural scores per segment
+
+Some summary statistics of the segmentation.
+
+```{r}
+b_scores_segment <- tibble(.rows = 0)
+
+for (p in seq_along(pop_segments$Population)){
+
+pop_scores <-
+pop_segments$data[[p]] %>% 
+  mutate(segment = as.character(segment)) %>% 
+  group_by(segment) %>% 
+  summarise(mean_bscore = round(mean(b_score)),
+            min_score = min(b_score),
+            max_score = max(b_score),
+            size = n()) %>% 
+  mutate(population = pop_segments$Population[p])
+
+b_scores_segment <- rbind(b_scores_segment, pop_scores)
+
+}
+
+b_scores_segment
+#b_scores_segment %>% write_xlsx("../outputs/b_scores_segment.xlsx")
+```
+
+
+
+```{r}
+b_scores_segment %>% 
+  ggplot(aes(x = segment, y = mean_bscore)) +
+  geom_col() +
+  geom_hline(yintercept = 500, lty = 2) +
+  facet_wrap(~population) +
+  geom_errorbar(aes(ymin = min_score, ymax = max_score), width = 0.2) +
+  geom_text(aes(label = glue::glue("{mean_bscore}({size})"), y = mean_bscore)) +
+  labs(title = "Behavioural scores per segment",
+       y = "Behavioural score")
+```
+
+
+## Dendrogram
+
+Considerations why 2 segments were used instead of 3:
+* Size segments are smaller making analysis less effective
+* Rolling out effective campaigns with 9 segments is more challenging
+
+```{r}
+plot(pop_segments$tree[[1]], main = "Dendrogram for AGYW")
+abline(h = 1000, col = "red")
 ```
 
 
@@ -705,9 +787,9 @@ doParallel::registerDoParallel(cores = 2)
 pdp_res <- list()
 
 for (var in seq_along(model_vars)){
-pdp_res[[var]] <- plot_pdp(model = model_rf_wr, 
-                         continuation_rate = "No.continuation",
-                         model_vars = model_vars[var])
+pdp_res[[var]] <- plot_pdp(model = model_rf_wr,
+                           continuation_rate = "No.continuation",
+                           model_vars = model_vars[var])
 }
 
 doParallel::stopImplicitCluster()
@@ -901,8 +983,8 @@ plot_imp(df = varImp(model_rf_ft_all)$importance,
 # EXPORT
 
 ```{r}
-save.image("../outputs/16July.RData")
-#load("../outputs/15July.RData")
+save.image("../outputs/17July.RData")
+#load("../outputs/16July.RData")
 ```
 
 
