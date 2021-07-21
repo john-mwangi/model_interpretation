@@ -8,8 +8,9 @@ author: "John Mwangi"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# PACKAGES
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 rm(list = ls())
 
 #library(iml)
@@ -171,162 +172,6 @@ data_questions <- data_proc %>% select(questions)
 
 data_questions
 ```
-
-# SUMMARY STATS
-
-*I am realising that the segments that are shared in this report are different from the work that Peter had done and the work that I had re-done, and I don't have a view of what changed in between to arrive at these particular segments in the report. If we are to include information concerning the segments, we will need to retrieve that particular document containing the final segments per participant.*
-
-## Excluded variables
-
-### Too many unique values
-
-These are an indicator of open ended questions.
-
-* Clinic selection has 19 options.
-* The rest have at most 15 options.
-
-```{r}
-#skim_results <- skimr::skim(drop_var_labs(data_questions)) %>% as_tibble()
-
-skim_results <- skimr::skim(data_raw) %>% as_tibble()
-```
-
-
-```{r}
-vars_many <-
-skim_results %>% 
-  filter(character.n_unique > 15) %>% 
-  pull(skim_variable)
-
-vars_many
-```
-
-
-### Identifier variables
-
-```{r}
-data_raw %>% 
-  select(-all_of(vars_many))
-```
-
-
-```{r}
-vars_id <- 
-c("Client_ID",
-"SubmissionDate",
-"starttime",
-"endtime",
-"deviceid",
-"subscriberid",
-"simid",
-"devicephonenum",
-"enum",
-"cal222",
-"calc233",
-"cal888",
-"e1demoq9",
-"e1end11e2calc_4",
-"formdef_version",
-"Age",
-"e1end11e2sxrepeat__count")
-
-vars_id
-```
-
-### Excluded
-
-```{r}
-vars_exclude <- unique(c(vars_many, vars_id))
-
-vars_exclude
-
-data_raw %>% 
-  select(-any_of(vars_exclude))
-```
-
-## Variables remaining
-
-These are the variables that will be analysed.
-
-* b_score : Behavioural score for each participant
-* b_segment : Key Populations split into 3 segments each
-
-```{r}
-data_final <- data_raw %>% select(-any_of(vars_exclude))
-
-# data_final$b_score <- data_bscores$b_score
-# data_final$b_segment <- data_bscores$b_segment
-
-data_final
-```
-
-
-## Frequency results
-
-Including NA responses.
-
-```{r}
-freq_results <-
- data_proc %>% 
-  select_if(.predicate = is.character) %>% 
-  map_df(.f = ~count(x = data.frame(response = .), 
-                     response),
-         .id = "variable") %>% 
-  mutate(records = nrow(data_raw)) %>% 
-  group_by(variable) %>% 
-  mutate(prop = n/records) %>% 
-  mutate(total_prop = sum(prop))
-
-freq_results %>% 
-  mutate(prop = scales::percent(x = prop, accuracy = 0.01))
-```
-
-
-## Mean, medians
-
-```{r}
-means_medians <-
-data_proc %>% 
-  select_if(.predicate = is.numeric) %>% 
-  summarise(across(.cols = everything(), 
-                   .fns = list(mean = ~mean(x = ., na.rm = TRUE),
-                               median = ~median(x = ., na.rm = TRUE)))) %>% 
-  pivot_longer(cols = everything()) %>% 
-  extract(col = name,
-          into = c("variable","measure"),
-          regex = "(.*)_(\\w+)") %>% 
-  pivot_wider(id_cols = variable,
-              names_from = measure,
-              values_from = value) %>% 
-  mutate(across(.cols = c(mean, median), 
-                .fns = ~round(x = ., ROUND)))
-
-means_medians
-```
-
-## Nulls and distinct
-
-```{r}
-nulls_distinct <-
-data_proc %>% 
-  summarise(across(.cols = everything(), 
-                   .fns = list(distinct = n_distinct,
-                               nulls = ~sum(is.na(.))))) %>% 
-  pivot_longer(cols = everything()) %>% 
-  extract(col = name,
-          into = c("variable","measure"),
-          regex = "(.*)_(\\w+)") %>% 
-  pivot_wider(id_cols = variable,
-              names_from = measure,
-              values_from = value) %>% 
-  mutate(records = nrow(data_proc),
-         prop_nulls = nulls/records,
-         prop_nulls = round(prop_nulls, ROUND))
-
-nulls_distinct
-```
-
-
 
 # BEHAVIORAL SCORING
 
@@ -516,7 +361,7 @@ cutree(tree = hclust(d = dist(x = b_scores, method = "euclidean"), method = "war
        k = 2)[1:20]
 ```
 
-Create a nested tibble containing the results of the segmentation (tree, segments)
+Create a nested tibble containing the results of the segmentation (tree, segments). Segments are on page 43 of the report.
 
 ```{r}
 pop_segments <-
@@ -525,55 +370,75 @@ data_raw %>%
   mutate(b_score = b_scores) %>% 
   group_by(Population) %>% 
   nest() %>% 
-  mutate(tree = map(.x = data, .f = ~hclust(d = dist(x = .$b_score, method = "euclidean"), method = "ward.D2"))) %>% 
-  mutate(segments = map(.x = tree, .f = ~cutree(tree = ., k = 2))) %>% 
-  mutate(data = map(.x = data, .f = ~mutate(.data = ., segment = segments[[1]]))) %>% 
+  mutate(tree = map(.x = data, 
+                    .f = ~hclust(d = dist(x = .$b_score, 
+                                          method = "euclidean"), 
+                                 method = "ward.D2"))) %>% 
+  bind_cols(k = c(3,4,3)) %>% 
+  mutate(segments = map2(.x = tree, 
+                         .y = k, 
+                         .f = ~cutree(tree = .x, k = .y))) %>% 
+  mutate(data = map(.x = data, 
+                    .f = ~mutate(.data = ., segment = segments[[1]]))) %>% 
   ungroup()
 
 pop_segments
 ```
+
+```{r}
+pop_segments %>% 
+  filter(str_detect(string = Population, pattern = "FSWs")) %>% 
+  pull(segments)
+```
+
 
 ## Behavioural scores per segment
 
 Some summary statistics of the segmentation.
 
 ```{r}
-b_scores_segment <- tibble(.rows = 0)
+segment_data <- tibble(.rows = 0)
 
 for (p in seq_along(pop_segments$Population)){
 
 pop_scores <-
 pop_segments$data[[p]] %>% 
   mutate(segment = as.character(segment)) %>% 
-  group_by(segment) %>% 
-  summarise(mean_bscore = round(mean(b_score)),
-            min_score = min(b_score),
-            max_score = max(b_score),
-            size = n()) %>% 
   mutate(population = pop_segments$Population[p])
 
-b_scores_segment <- rbind(b_scores_segment, pop_scores)
-
+segment_data <- rbind(segment_data, pop_scores)
 }
+
+segment_data
+```
+
+
+```{r}
+b_scores_segment <-
+segment_data %>% 
+  group_by(population, segment) %>% 
+  summarise(mean_score = round(mean(b_score)),
+            min_score = min(b_score),
+            max_score = max(b_score),
+            size = n())
 
 b_scores_segment
 #b_scores_segment %>% write_xlsx("../outputs/b_scores_segment.xlsx")
 ```
 
 
-
 ```{r}
 b_scores_segment %>% 
-  ggplot(aes(x = segment, y = mean_bscore)) +
+  ggplot(aes(x = segment, y = mean_score)) +
   geom_col() +
   geom_hline(yintercept = 500, lty = 2) +
-  facet_wrap(~population) +
+  facet_wrap(~population, scales = "free_x") +
   geom_errorbar(aes(ymin = min_score, ymax = max_score), width = 0.2) +
-  geom_text(aes(label = glue::glue("{mean_bscore}({size})"), y = mean_bscore)) +
+  geom_text(aes(label = glue::glue("{mean_score}({size})"), y = mean_score)) +
+  #geom_text(aes(label = mean_score, y = mean_score), nudge_x = -0.25) +
   labs(title = "Behavioural scores per segment",
        y = "Behavioural score")
 ```
-
 
 ## Dendrogram
 
@@ -583,7 +448,41 @@ Considerations why 2 segments were used instead of 3:
 
 ```{r}
 plot(pop_segments$tree[[1]], main = "Dendrogram for AGYW")
-abline(h = 1000, col = "red")
+abline(h = 300, col = "red")
+```
+
+## Comparision with previous segments
+
+```{r}
+data_pk %>% 
+  select(Client_ID, previous_segment = Segment, Continuation_rates = Continuation_rates.x) %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  rename(current_segment = segment) %>% 
+  mutate(previous_segment = parse_number(previous_segment)) %>% 
+  mutate(previous_segment = as.character(previous_segment)) %>% 
+  group_by(population, previous_segment) %>% 
+  mutate(previous_count = n()) %>% 
+  group_by(population, current_segment) %>% 
+  mutate(current_count = n()) %>% 
+  group_by(population, Continuation_rates, previous_segment, current_segment) %>% 
+  summarise(previous_count = mean(previous_count),
+            current_count = mean(current_count)) %>% 
+  ungroup() %>% 
+  relocate(previous_count, .after = previous_segment) %>% 
+  write_xlsx("../outputs/segment_comparison.xlsx")
+```
+
+
+```{r}
+data_pk %>% 
+  select(Client_ID, previous_segment = Segment, Continuation_rates = Continuation_rates.x) %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  rename(current_segment = segment) %>% 
+  mutate(previous_segment = parse_number(previous_segment)) %>% 
+  mutate(previous_segment = as.character(previous_segment)) %>% 
+  filter(str_detect(string = population, pattern = "FSW")) %>% 
+  count(previous_segment, current_segment) %>% 
+  filter(previous_segment %in% c(1, 4))
 ```
 
 
@@ -865,126 +764,85 @@ data_train %>%
 ```
 
 
-# PREDICTIVE TOOL
+# SUMMARY STATISTICS
 
-## Load data
+Summary and descriptive statistics of the 28 most important variables.
 
-Image that was used to arrive at the final 10 features on the predictive tool.
+## Categorical variables
 
-```{r}
-rm(list = ls())
-
-load("../inputs/Wrapper Methods/oral_prep_final_model_ensemble_ft_eng_v3.RData")
-```
-
-## Which model was used?
-
-Different algorithms were applied and ensembled using a neural network.
-
-4 base models (ct,rf,svmR,svmP) + nnet
-
-## How accurate was the model?
-
-Had an accuracy of 70% in predicting Low Continuation.
+Counts of responses per segment.
 
 ```{r}
-conf_matrix <- confusionMatrix(data = preds_ens_nnet$cont_ens_nnet.th, reference = model_probs_te$Continuation_rates)
+cat_cols <- 
+data_raw %>% 
+  select(imp_vars_wrapper) %>% 
+  select(is_character) %>% 
+  colnames()
 
-conf_matrix
-# Terms:
-# Sensitivity= 20/37=Accuracy of predicting high cont
-# Specificity= 57/81=Accuracy of predicting low cont
+cat_cols
 ```
 
 ```{r}
-conf_matrix$table
+segmented_obs <-
+data_raw %>% 
+  select(c("Client_ID", imp_vars_wrapper)) %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  select(-Client_ID) %>% 
+  group_by(population, segment)
+
+segmented_obs
 ```
 
 
-## Variable importnce
-
 ```{r}
-plot_imp <- function(df, top, name){
-  
-  var_imp_df <-
-  df %>% 
-  select(any_of(c("Overall", "Overall" = "High_Continuation"))) %>% 
-  rownames_to_column("variable") %>% 
-  extract(col = variable,
-          into = c("question","resp"),
-          regex = "(.*)_(.*)",
-          remove = FALSE) %>% 
-  arrange(desc(Overall))
-  
-  var_imp_plot <-
-  var_imp_df %>% 
-  head(top) %>% 
-  mutate(variable = fct_reorder(variable, Overall)) %>% 
-  ggplot(aes(x = variable, y = Overall)) +
-  geom_col() +
-  coord_flip() +
-  labs(title = glue::glue("{name}: Variable importance plot"),
-       subtitle = glue::glue("{top} most important variables that influence continuation rates"),
-       x = NULL,
-       y = "Importance") +
-    theme(plot.title.position = "plot")
-  
-  writexl::write_xlsx(x = var_imp_df,
-                      path = glue::glue("../outputs/{name}.xlsx"))
-  
-  return(list(tbl = var_imp_df, 
-              plt = var_imp_plot))
-    
+count_df <- tibble(.rows = 0)
+
+for (col in seq_along(cat_cols)){
+df <-
+  segmented_obs %>% 
+  count(response = .data[[cat_cols[col]]]) %>% 
+  mutate(variable = cat_cols[col])
+
+count_df <- rbind(count_df, df)
 }
+
+count_df
+
+#write_xlsx(x = count_df, path = "../outputs/count_df.xlsx")
 ```
 
+## Numeric varibles
 
-### SVMRadial
-
-Support Vector Machine with a Radial kernel.
-
-```{r}
-plot_imp(df = varImp(model_svmR_ft_all)$importance,
-         top = 20,
-         name = "SVM Radial")
-```
-
-### SVMPoly
-
-Support Vector Machine with Polynomial kernel.
+Mean and median values
 
 ```{r}
-plot_imp(df = varImp(model_svmP_ft_all)$importance,
-         top = 20,
-         name = "SVM Poly")
-```
+means_df <-
+segmented_obs %>% 
+  select(is.numeric) %>% 
+  select(-b_score) %>% 
+  summarise(across(.cols = everything(), 
+                   .fns = list(mean = mean, 
+                               median = median))) %>% 
+  pivot_longer(cols = c(-population, -segment)) %>% 
+  extract(col = name, 
+          into = c("variable","metric"), 
+          regex = "(.*)_(.*)", 
+          remove = TRUE) %>% 
+  pivot_wider(names_from = metric,
+              values_from = value) %>% 
+  mutate(mean = round(mean, 1))
 
-### CTree
+means_df
 
-Conditional Inference Tree
-
-```{r}
-plot_imp(df = varImp(model_ct_ft_all)$importance,
-         top = 20,
-         name = "C Tree")
-```
-
-### Random Forest
-
-Random Forest
-
-```{r}
-plot_imp(df = varImp(model_rf_ft_all)$importance,
-         top = 20,
-         name = "Random Forest")
+#write_xlsx(x = means_df, path = "../outputs/means_df.xlsx")
 ```
 
 
 # EXPORT
 
 ```{r}
-save.image("../outputs/17July.RData")
-#load("../outputs/16July.RData")
+save.image("../outputs/21July.RData")
+#load("../outputs/20July.RData")
 ```
 
 
