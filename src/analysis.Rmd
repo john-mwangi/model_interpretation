@@ -1,5 +1,5 @@
 ---
-title: 'Oral Prep: Summary tables'
+title: 'Oral Prep: Model interpretation'
 output: html_document
 author: "John Mwangi"
 ---
@@ -14,6 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 rm(list = ls())
 
 #library(iml)
+library(factoextra)
 library(pdp)
 library(caret)
 library(expss)
@@ -440,7 +441,9 @@ b_scores_segment %>%
        y = "Behavioural score")
 ```
 
-## Dendrogram
+## Appropriate number of segments
+
+### Dendrogram
 
 Considerations why 2 segments were used instead of 3:
 * Size segments are smaller making analysis less effective
@@ -450,6 +453,55 @@ Considerations why 2 segments were used instead of 3:
 plot(pop_segments$tree[[1]], main = "Dendrogram for AGYW")
 abline(h = 300, col = "red")
 ```
+
+### Cluster Visualisation
+
+```{r}
+
+silhoutte <- list()
+
+for (pop in seq_along(pop_segments$data)){
+
+silhoutte[[pop]] <- fviz_nbclust(
+  x = data.frame(b_scores = pop_segments$data[[pop]]$b_score), 
+  FUNcluster = hcut, 
+  method = "silhouette")
+
+silhoutte[[pop]] <-
+silhoutte[[pop]] + 
+  labs(title = glue::glue("Optimal number of clusters in {pop_segments$Population[[pop]]}"))
+}
+
+
+for (pop in 1:pop){
+  print(silhoutte[[pop]])
+}
+```
+
+
+```{r}
+
+gap_stat <- list()
+
+for (pop in seq_along(pop_segments$data)){
+
+gap_stat[[pop]] <- fviz_nbclust(
+  x = data.frame(b_scores = pop_segments$data[[pop]]$b_score), 
+  FUNcluster = hcut, 
+  method = "gap_stat", 
+  nboot = 10)
+
+gap_stat[[pop]] <-
+gap_stat[[pop]] + 
+  labs(title = glue::glue("Optimal number of clusters in {pop_segments$Population[[pop]]}"))
+}
+
+
+for (pop in 1:pop){
+  print(gap_stat[[pop]])
+}
+```
+
 
 ## Comparision with previous segments
 
@@ -838,11 +890,21 @@ means_df
 ```
 
 
+```{r}
+data_raw %>% 
+  mutate(Continuation_rates = factor(Continuation_rates)) %>% 
+  mutate(Continuation_rates = relevel(x = Continuation_rates, ref = "No continuation")) %>% 
+  ggplot(aes(Continuation_rates)) +
+  geom_histogram(stat = "count")
+```
+
+
 # EXPORT
 
 ```{r}
-save.image("../outputs/21July.RData")
-#load("../outputs/20July.RData")
+save.image("../outputs/24July.RData")
+
+load("../outputs/21July.RData")
 ```
 
 
