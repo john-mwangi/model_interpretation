@@ -33,12 +33,12 @@ ROUND <- 2
 
 # DATA IMPORTATION
 
+## Import
+
 ```{r}
 data_sav <-
   haven::read_sav(file = "../inputs/Source Data/Oral PrEP  survey v5_WIDE.sav") %>%
   map_df(.f = ~expss::na_if(x = ., value = "", with_labels = TRUE))
-
-data_dictionary <- create_dictionary(x = data_sav)
 
 data_raw <-
   read_excel("../inputs/Behavioural Scoring/Clean_data_scored1_3Clusters_v2.xlsx", 
@@ -47,7 +47,6 @@ data_raw <-
 
 
 data_sav
-data_dictionary
 data_raw
 ```
 
@@ -75,65 +74,142 @@ data_pk %>%
 
 ## Add data labels
 
-```{r}
-surv_cols <- tibble(surv_cols = data_raw %>% colnames())
-
-surv_cols
-data_dictionary
-```
-
+Import survey instrument variable names and labels
 
 ```{r}
-surv_cols <-
-surv_cols %>% 
-  mutate(variable = str_extract(string = surv_cols, 
-                                pattern = "q.*$")) %>% 
-  mutate(variable = coalesce(variable, surv_cols))
+cto_spec <-
+  read_excel(path = "../inputs/Source Data/Oral PrEP 15102019_GM0.xlsx", sheet = "survey") %>% 
+  select(type, name, label) %>% 
+  filter(!is.na(name))
 
-surv_cols
+cto_spec
 ```
 
-Retrieve data labels.
-
-Behaviour labels.
+Labels for Bahavioural questions.
 
 ```{r}
 behave_vars <- read_excel(path = "../inputs/Source Data/behave_labels.xlsx")
-
-behave_vars <-
-behave_vars %>% 
-  rename(surv_cols = variable)
-
-behave_vars
 ```
 
+Add labels from the survey instrument.
 
 ```{r}
-surv_labels <-
-surv_cols %>% 
-  left_join(data_dictionary, by = "variable") %>% 
-  group_by(surv_cols) %>% 
-  slice(1) %>% 
-  ungroup() %>% 
-  left_join(behave_vars, by = "surv_cols") %>% 
+raw_labels <-
+data_raw %>% 
+  colnames() %>% 
+  as_tibble() %>% 
+  mutate(name = str_extract(string = value, pattern = "q.*$")) %>% 
+  mutate(name = coalesce(name, value)) %>% 
+  mutate(main = str_extract(string = name, pattern = "^q\\d+_")) %>% 
+  mutate(main = str_remove(string = main, pattern = "_")) %>% 
+  mutate(main = coalesce(main, name)) %>% 
+  left_join(cto_spec, by = c("main" = "name")) %>% 
+  left_join(behave_vars, by = c("name"="variable")) %>% 
   mutate(label = coalesce(label.x, label.y)) %>% 
-  select(surv_cols, variable, label)
+  select(-label.x, -label.y)
 
-surv_labels %>% filter(!is.na(label))
+raw_labels
 ```
 
 
 ## Add labels to raw_data
 
 ```{r}
-data_labeled <- tibble(.rows = 597)
+data_labeled <- tibble(.rows = nrow(data_raw))
 
 for (i in seq_along(colnames(data_raw))){
-  labeled_col <- set_var_lab(x = data_raw %>% select(i), value = surv_labels$label[i])
+  labeled_col <- set_var_lab(x = data_raw %>% select(i), value = raw_labels$label[i])
   data_labeled <- bind_cols(data_labeled, labeled_col)
 }
 
 data_labeled
+```
+
+## Add value labels
+
+Convert values to label for `e1end11e2hseq32`
+
+```{r}
+data_sav$q32
+
+data_labeled <-
+data_labeled %>% 
+  mutate(e1end11e2hseq32 = set_val_lab(x = data_labeled$e1end11e2hseq32, value = val_lab(data_sav$q32), add = TRUE)) %>% 
+  mutate(e1end11e2hseq32 = values2labels(e1end11e2hseq32))
+
+data_labeled
+```
+
+
+## Relabel some variables
+
+Variables to re-label
+
+```{r}
+re_label <-
+cto_spec %>% 
+  filter(str_detect(string = name, pattern = "\\.")) %>% 
+  mutate(rename = glue::glue("e1demoend1{name}"))
+
+re_label
+```
+
+
+```{r}
+to_relabel <- data_labeled %>% select(e1demoend1q26:e1demoend1q28b)
+
+relabeled <- tibble(.rows = nrow(data_raw))
+
+for (r in seq_along(colnames(to_relabel))){
+  labeled_col <- set_var_lab(x = to_relabel %>% select(r), value = re_label$label[[r]])
+  relabeled <- bind_cols(relabeled, labeled_col)
+}
+
+relabeled <- set_names(x = relabeled, nm = re_label$rename)
+
+relabeled
+```
+
+
+```{r}
+data_labeled <-
+data_labeled %>% 
+  select(-all_of(colnames(to_relabel))) %>% 
+  bind_cols(relabeled)
+
+data_labeled
+```
+
+## Data dictionary
+
+```{r}
+data_dictionary <- create_dictionary(x = data_labeled)
+
+data_dictionary
+```
+
+
+## e1q8
+
+Check if this variable is a replica of the outcome variable. 
+
+Answer: No
+
+```{r}
+data_raw %>% 
+  select(Continuation_rates, e1q8) %>% 
+  group_by(Continuation_rates) %>% 
+  summarise(range = range(e1q8))
+```
+
+
+```{r}
+data_raw %>% 
+  select(Continuation_rates, e1q8) %>% 
+  group_by(Continuation_rates) %>% 
+  ggplot(aes(x = e1q8)) +
+  geom_histogram(bins = 10) +
+  facet_wrap(~Continuation_rates)
 ```
 
 ## Clarifications
@@ -173,6 +249,35 @@ data_questions <- data_proc %>% select(questions)
 
 data_questions
 ```
+
+
+## Multiple select questions
+
+Apart from q40, most multiple select questions contain NA values.
+
+```{r}
+data_sav %>% 
+  select(contains("q40"))
+
+data_raw %>% 
+  select(contains("q40")) %>% 
+  count(e1end11e2prepq40_1)
+```
+
+## Changing variable types
+
+These variables are captured as character but should be numeric.
+
+```{r}
+data_labeled <-
+data_labeled %>% 
+  mutate(across(.cols = c("e1demoend1q21","e1end11e2hseq29","e1end11e2hseq29b",
+                          "e1end11e2hseq30","e1end11e2hseq31"), 
+                .fns = as.numeric))
+
+data_labeled
+```
+
 
 # BEHAVIORAL SCORING
 
@@ -375,7 +480,7 @@ data_raw %>%
                     .f = ~hclust(d = dist(x = .$b_score, 
                                           method = "euclidean"), 
                                  method = "ward.D2"))) %>% 
-  bind_cols(k = c(3,4,3)) %>% 
+  bind_cols(k = c(2,2,2)) %>% 
   mutate(segments = map2(.x = tree, 
                          .y = k, 
                          .f = ~cutree(tree = .x, k = .y))) %>% 
@@ -424,6 +529,7 @@ segment_data %>%
             size = n())
 
 b_scores_segment
+
 #b_scores_segment %>% write_xlsx("../outputs/b_scores_segment.xlsx")
 ```
 
@@ -818,9 +924,127 @@ data_train %>%
 
 # SUMMARY STATISTICS
 
-Summary and descriptive statistics of the 28 most important variables.
+## Demographics
 
-## Categorical variables
+These are summary statistics of the socio-demographic features of the survey participants.
+
+### Demographic variables
+
+`e1demoq9` is the respondent's name.
+
+```{r}
+demo_vars <- 
+  data_labeled %>% 
+  select(Population, contains(c("demo","hse"))) %>% 
+  select(-e1demoq9) %>% 
+  drop_var_labs()
+
+demo_vars
+```
+
+
+### Numeric
+
+Demographic variables as listed in the survey instrument.
+
+```{r}
+demo_numeric <-
+  demo_vars %>% 
+  select(Population, is.numeric) %>% 
+  group_by(Population) %>% 
+  summarise(across(.fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               median = ~median(x = ., na.rm = TRUE)))) %>% 
+  pivot_longer(cols = -Population) %>% 
+  extract(col = name, 
+          into = c("variable","metric"), 
+          regex = "(.*)_(.*)", 
+          remove = TRUE) %>% 
+  pivot_wider(names_from = metric,
+              values_from = value)
+
+demo_numeric
+```
+
+### Categorical
+
+`e1demoq9` is the respondent's name.
+
+```{r}
+demo_vars_cat <-
+  demo_vars %>% 
+  select(-Population, where(is_character)) %>% 
+  colnames()
+
+demo_vars_cat
+```
+
+```{r}
+data_labeled %>% 
+  count(Population, response = e1demoend1q15)
+```
+
+```{r}
+demo_categorical <- tibble(.rows = 0)
+
+for (var in seq_along(demo_vars_cat)){
+  demo_df <-
+    data_labeled %>% 
+    count(Population, response = .data[[demo_vars_cat[var]]]) %>%
+    mutate(variable = demo_vars_cat[var])
+  
+  demo_categorical <- rbind(demo_categorical, demo_df)
+  demo_categorical <- drop_var_labs(demo_categorical)
+}
+
+demo_categorical
+```
+
+
+### Null values
+
+```{r}
+demo_nulls <-
+  demo_vars %>% 
+  group_by(Population) %>% 
+  summarise(across(.cols = everything(),
+                   .fns = ~sum(is.na(.)))) %>% 
+  pivot_longer(cols = -Population,
+               names_to = "variable",
+               values_to = "nulls")
+
+demo_nulls
+```
+
+### Appending
+
+```{r}
+socio_demographic_stats <-
+demo_categorical %>% 
+  bind_rows(demo_numeric) %>%
+  left_join(demo_nulls, by = c("Population", "variable")) %>% 
+  left_join(data_dictionary, by = "variable") %>% 
+  mutate(Population = str_squish(Population)) %>% 
+  mutate(total = case_when(Population == "AGYWs" ~ 198,
+                           Population == "Female Sex Workers (FSWs)" ~ 200,
+                           TRUE ~ 199)) %>% 
+  mutate(percentage = n/total) %>% 
+  arrange(variable, Population, desc(percentage)) %>% 
+  select(Population, variable, label, category = response, frequency = n, nulls, total, percentage, mean, median) %>% 
+  mutate(percentage = scales::percent(x = percentage, accuracy = 0.01))
+
+socio_demographic_stats
+```
+
+```{r}
+data_raw %>% 
+  count(Population)
+```
+
+## Important variables
+
+These are summary statistics for the 28 most important variables.
+
+### Categorical variables
 
 Counts of responses per segment.
 
@@ -828,7 +1052,7 @@ Counts of responses per segment.
 cat_cols <- 
 data_raw %>% 
   select(imp_vars_wrapper) %>% 
-  select(is_character) %>% 
+  select(where(is_character)) %>% 
   colnames()
 
 cat_cols
@@ -852,18 +1076,23 @@ count_df <- tibble(.rows = 0)
 for (col in seq_along(cat_cols)){
 df <-
   segmented_obs %>% 
-  count(response = .data[[cat_cols[col]]]) %>% 
+  count(response = .data[[cat_cols[col]]], name = "frequency") %>% 
   mutate(variable = cat_cols[col])
 
 count_df <- rbind(count_df, df)
 }
 
-count_df
 
-#write_xlsx(x = count_df, path = "../outputs/count_df.xlsx")
+count_df <-
+count_df %>% 
+  left_join(data_dictionary, by = "variable") %>% 
+  select(-meta, -value)
+
+
+count_df
 ```
 
-## Numeric varibles
+### Numeric varibles
 
 Mean and median values
 
@@ -884,10 +1113,26 @@ segmented_obs %>%
               values_from = value) %>% 
   mutate(mean = round(mean, 1))
 
-means_df
 
-#write_xlsx(x = means_df, path = "../outputs/means_df.xlsx")
+means_df <-
+means_df %>% 
+  left_join(data_dictionary, by = "variable") %>% 
+  select(-value, -meta)
+
+means_df
 ```
+
+
+```{r}
+imp_vars_desc <-
+  bind_rows(count_df, means_df) %>% 
+  rename(category = response) %>% 
+  arrange(variable, population, segment)
+
+imp_vars_desc
+write_xlsx(x = imp_vars_desc, path = "../outputs/imp_vars_desc.xlsx")
+```
+
 
 
 ```{r}
@@ -899,13 +1144,40 @@ data_raw %>%
 ```
 
 
+
+
 # EXPORT
 
-```{r}
-save.image("../outputs/24July.RData")
+## Tables
 
-load("../outputs/21July.RData")
+```{r}
+write_xlsx(x = socio_demographic_stats,
+           path = "../outputs/socio_demographic_stats.xlsx")
 ```
 
+## Images
+
+```{r}
+save.image("../outputs/08Aug.RData")
+```
+
+
+```{r}
+rm(list = ls())
+
+load("../inputs/Behavioural Scoring/b_score_model.RData")
+load("../outputs/07Aug.RData")
+#load("../inputs/Behavioural Scoring/b_score_model.RData")
+```
+
+
+```{r}
+#saveRDS(object = model_rf_wr, file = "../inputs/model_rf_wr.rds")
+```
+
+
+```{r}
+#model_rf_wr <- readRDS(file = "../inputs/model_rf_wr.rds")
+```
 
 
