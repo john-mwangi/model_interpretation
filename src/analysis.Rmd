@@ -11,9 +11,10 @@ knitr::opts_chunk$set(echo = TRUE)
 # PACKAGES
 
 ```{r message=FALSE, warning=FALSE}
-rm(list = ls())
 
 #library(iml)
+library(scales)
+library(glue)
 library(factoextra)
 library(pdp)
 library(caret)
@@ -28,7 +29,7 @@ library(tidyverse)
 Constants.
 
 ```{r}
-ROUND <- 2
+ROUND <- 1
 ```
 
 # DATA IMPORTATION
@@ -264,16 +265,37 @@ data_raw %>%
   count(e1end11e2prepq40_1)
 ```
 
-## Changing variable types
+## Numeric demograpic variables
 
 These variables are captured as character but should be numeric.
 
 ```{r}
 data_labeled <-
 data_labeled %>% 
-  mutate(across(.cols = c("e1demoend1q21","e1end11e2hseq29","e1end11e2hseq29b",
+  mutate(across(.cols = c("e1demoend1q21","e1end11e2hseq25",
+                          "e1end11e2hseq29","e1end11e2hseq29b",
                           "e1end11e2hseq30","e1end11e2hseq31"), 
                 .fns = as.numeric))
+
+data_labeled
+```
+
+
+```{r}
+data_labeled %>% 
+  select(where(is.numeric)) %>% 
+  colnames()
+```
+
+## Shorten population
+
+```{r}
+data_labeled <-
+data_labeled %>% 
+  mutate(Population = str_squish(Population)) %>% 
+  mutate(Population = case_when(Population == "Female Sex Workers (FSWs)" ~ "FSWs",
+                                Population == "Men who have sex with Men (MSMs)" ~ "MSMs",
+                                TRUE ~ "AGYWs"))
 
 data_labeled
 ```
@@ -924,11 +946,9 @@ data_train %>%
 
 # SUMMARY STATISTICS
 
-## Demographics
+## Demographic variables 
 
 These are summary statistics of the socio-demographic features of the survey participants.
-
-### Demographic variables
 
 `e1demoq9` is the respondent's name.
 
@@ -942,17 +962,49 @@ demo_vars <-
 demo_vars
 ```
 
+### Outcome
+
+```{r}
+pop_outcome <-
+data_labeled %>%
+  group_by(Population) %>% 
+  count(Continuation_rates) %>% 
+  mutate(prop = n/sum(n),
+         perc = percent(x = prop, accuracy = 0.1)) %>% 
+  mutate(freq_perc = glue("{n} ({perc})")) %>% 
+  select(-n, -prop, -perc) %>% 
+  pivot_wider(names_from = Population,
+              values_from = freq_perc)
+
+overall_outcome <-
+data_labeled %>% 
+  count(Continuation_rates) %>% 
+  mutate(prop = n/sum(n),
+         perc = percent(x = prop, accuracy = 0.1)) %>%
+  mutate(Overall = glue("{n} ({perc})")) %>% 
+  select(-n, -prop, -perc)
+
+demo_outcome <-
+pop_outcome %>% 
+  left_join(overall_outcome) %>% 
+  rename(variable = Continuation_rates) %>% 
+  mutate(category = "Frequency (Percentage)") %>% 
+  relocate(category, .after = variable)
+
+demo_outcome
+```
 
 ### Numeric
 
 Demographic variables as listed in the survey instrument.
 
 ```{r}
-demo_numeric <-
+pop_numeric <-
   demo_vars %>% 
   select(Population, is.numeric) %>% 
   group_by(Population) %>% 
   summarise(across(.fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               sd = ~sd(x = ., na.rm = TRUE),
                                median = ~median(x = ., na.rm = TRUE)))) %>% 
   pivot_longer(cols = -Population) %>% 
   extract(col = name, 
@@ -960,19 +1012,47 @@ demo_numeric <-
           regex = "(.*)_(.*)", 
           remove = TRUE) %>% 
   pivot_wider(names_from = metric,
-              values_from = value)
+              values_from = value) %>% 
+  mutate(mean = round(mean, ROUND),
+         sd = round(sd, ROUND)) %>% 
+  mutate(mean_sd = glue("{mean} ({sd})")) %>% 
+  select(-mean, -sd, -median) %>% 
+  pivot_wider(names_from = Population,
+              values_from = mean_sd)
+
+overall_numeric <-
+demo_vars %>% 
+  select(is.numeric) %>% 
+  summarise(across(.fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               sd = ~sd(x = ., na.rm = TRUE)))) %>% 
+  pivot_longer(cols = everything()) %>% 
+  extract(col = name, 
+          into = c("variable","metric"), 
+          regex = "(.*)_(.*)", 
+          remove = TRUE) %>% 
+  pivot_wider(names_from = metric,
+              values_from = value) %>% 
+  mutate(mean = round(mean, ROUND),
+         sd = round(sd, ROUND)) %>% 
+  mutate(Overall = glue("{mean} ({sd})")) %>% 
+  select(-mean, -sd)
+
+demo_numeric <-
+pop_numeric %>% 
+  left_join(overall_numeric, by = "variable") %>% 
+  mutate(category = "Mean +/- SD") %>% 
+  relocate(category, .after = variable)
 
 demo_numeric
 ```
 
 ### Categorical
 
-`e1demoq9` is the respondent's name.
-
 ```{r}
 demo_vars_cat <-
   demo_vars %>% 
-  select(-Population, where(is_character)) %>% 
+  select(where(is.character)) %>% 
+  select(-Population) %>% 
   colnames()
 
 demo_vars_cat
@@ -995,8 +1075,49 @@ for (var in seq_along(demo_vars_cat)){
   demo_categorical <- rbind(demo_categorical, demo_df)
   demo_categorical <- drop_var_labs(demo_categorical)
 }
+```
 
-demo_categorical
+
+```{r}
+pop_categorical <-
+demo_categorical %>%
+  group_by(Population, variable) %>% 
+  mutate(prop = n/sum(n),
+         perc = percent(x = prop, accuracy = 0.1)) %>% 
+  mutate(freq_perc = glue("{n} ({perc})")) %>% 
+  arrange(desc(n), .by_group = TRUE) %>% 
+  select(-n, -prop, -perc) %>% 
+  relocate(variable, .after = Population) %>% 
+  pivot_wider(names_from = Population,
+              values_from = freq_perc)
+
+pop_categorical
+```
+
+
+```{r}
+overall_categorical <-
+demo_categorical %>% 
+  pivot_wider(names_from = Population,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(total = rowSums(across(AGYWs:MSMs))) %>% 
+  mutate(prop = total/nrow(data_raw),
+         perc = percent(x = prop, accuracy = 0.1)) %>% 
+  mutate(Overall = glue("{total} ({perc})")) %>% 
+  select(variable, response, Overall)
+
+overall_categorical
+```
+
+
+```{r}
+demo_categorical_summ <-
+pop_categorical %>% 
+  left_join(overall_categorical) %>% 
+  rename(category = response)
+
+demo_categorical_summ
 ```
 
 
@@ -1010,35 +1131,108 @@ demo_nulls <-
                    .fns = ~sum(is.na(.)))) %>% 
   pivot_longer(cols = -Population,
                names_to = "variable",
-               values_to = "nulls")
+               values_to = "nulls") %>% 
+  pivot_wider(names_from = Population,
+              values_from = nulls) %>% 
+  mutate(Overall = rowSums(across(AGYWs:MSMs)))
 
-demo_nulls
+few_nulls <-
+demo_nulls %>% 
+  arrange(Overall) %>% 
+  filter(Overall < 100) %>% 
+  pull(variable)
+
+few_nulls
+```
+
+### Variable levels
+
+Number of choices for categorical responses.
+
+```{r}
+few_levels <-
+left_join(
+demo_vars %>% 
+  select(all_of(demo_vars_cat)) %>%
+  summarise(across(.cols = everything(),
+                   .fns = list(len = ~length(unique(.)),
+                               vals = ~paste0(unique(.), collapse = ",")))) %>% 
+  pivot_longer(cols = contains("len"),
+               values_to = "lens") %>% 
+  select(name, lens) %>% 
+  mutate(name = str_remove(string = name, pattern = "_len")),
+
+
+demo_vars %>% 
+  select(all_of(demo_vars_cat)) %>%
+  summarise(across(.cols = everything(),
+                   .fns = list(len = ~length(unique(.)),
+                               vals = ~paste0(unique(.), collapse = ",")))) %>% 
+  pivot_longer(cols = contains("vals"),
+               values_to = "vals") %>% 
+  select(name, vals) %>% 
+  mutate(name = str_remove(string = name, pattern = "_vals")), 
+
+by = "name") %>% 
+  arrange(desc(lens)) %>% 
+  filter(lens <= 5)
+
+few_levels
 ```
 
 ### Appending
 
 ```{r}
 socio_demographic_stats <-
-demo_categorical %>% 
-  bind_rows(demo_numeric) %>%
-  left_join(demo_nulls, by = c("Population", "variable")) %>% 
+demo_numeric %>% 
+  bind_rows(demo_categorical_summ) %>% 
   left_join(data_dictionary, by = "variable") %>% 
-  mutate(Population = str_squish(Population)) %>% 
-  mutate(total = case_when(Population == "AGYWs" ~ 198,
-                           Population == "Female Sex Workers (FSWs)" ~ 200,
-                           TRUE ~ 199)) %>% 
-  mutate(percentage = n/total) %>% 
-  arrange(variable, Population, desc(percentage)) %>% 
-  select(Population, variable, label, category = response, frequency = n, nulls, total, percentage, mean, median) %>% 
-  mutate(percentage = scales::percent(x = percentage, accuracy = 0.01))
+  select(-value, -meta) %>% 
+  relocate(label, .after = variable) %>% 
+  mutate(sorter = str_extract(string = Overall, pattern = "^\\d+")) %>%
+  mutate(sorter = parse_number(sorter)) %>% 
+  arrange(variable, desc(sorter)) %>% 
+  select(-sorter)
 
 socio_demographic_stats
+#write_xlsx(x = socio_demographic_stats, path = "../outputs/socio_demographic_stats.xlsx")
 ```
 
+### For discussion
+
+These are variables with reasonably few levels and null values, as well as numeric variables.
+
 ```{r}
-data_raw %>% 
+demo_for_discussion <-
+append(
+few_levels %>% 
+  filter(name %in% few_nulls) %>% 
+  pull(name),
+
+demo_numeric %>% 
+  pull(variable))
+
+demo_for_discussion
+```
+
+
+```{r}
+socio_demographic_stats %>% 
+  filter(variable %in% demo_for_discussion) %>% 
+  write_xlsx(path = "../outputs/for_discussion.xlsx")
+
+  map_df(.x = ., 
+         .at = c("AGYWs","FSWs","MSMs"), 
+         .f = ~gsub(x = ., pattern = "%", replacement = "")) %>% 
+  write_xlsx(path = "../outputs/for_discussion.xlsx")
+```
+
+
+```{r}
+data_labeled %>% 
   count(Population)
 ```
+
 
 ## Important variables
 
@@ -1050,8 +1244,8 @@ Counts of responses per segment.
 
 ```{r}
 cat_cols <- 
-data_raw %>% 
-  select(imp_vars_wrapper) %>% 
+data_labeled %>% 
+  select(all_of(imp_vars_wrapper)) %>% 
   select(where(is_character)) %>% 
   colnames()
 
@@ -1143,19 +1337,7 @@ data_raw %>%
   geom_histogram(stat = "count")
 ```
 
-
-
-
 # EXPORT
-
-## Tables
-
-```{r}
-write_xlsx(x = socio_demographic_stats,
-           path = "../outputs/socio_demographic_stats.xlsx")
-```
-
-## Images
 
 ```{r}
 save.image("../outputs/08Aug.RData")
@@ -1165,19 +1347,7 @@ save.image("../outputs/08Aug.RData")
 ```{r}
 rm(list = ls())
 
-load("../inputs/Behavioural Scoring/b_score_model.RData")
-load("../outputs/07Aug.RData")
-#load("../inputs/Behavioural Scoring/b_score_model.RData")
-```
-
-
-```{r}
-#saveRDS(object = model_rf_wr, file = "../inputs/model_rf_wr.rds")
-```
-
-
-```{r}
-#model_rf_wr <- readRDS(file = "../inputs/model_rf_wr.rds")
+load("../outputs/08Aug.RData")
 ```
 
 
