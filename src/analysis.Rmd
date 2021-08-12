@@ -187,6 +187,7 @@ data_labeled
 data_dictionary <- create_dictionary(x = data_labeled)
 
 data_dictionary
+#write_xlsx(x = data_dictionary, path = "../outputs/data_dictionary.xlsx")
 ```
 
 
@@ -296,6 +297,20 @@ data_labeled %>%
   mutate(Population = case_when(Population == "Female Sex Workers (FSWs)" ~ "FSWs",
                                 Population == "Men who have sex with Men (MSMs)" ~ "MSMs",
                                 TRUE ~ "AGYWs"))
+
+data_labeled
+```
+
+## Fix incorrect categories
+
+```{r}
+data_labeled <-
+data_labeled %>% 
+  mutate(e1end11e2hseq32 = str_replace(string = e1end11e2hseq32, 
+                                       pattern = "4", 
+                                       replacement = "Undecided/ Don’t know"))
+
+unique(data_labeled$e1end11e2hseq32)
 
 data_labeled
 ```
@@ -921,11 +936,9 @@ for (var in seq_along(pdp_res)){
 }
 
 pdp_tbls
+#write_xlsx(pdp_tbls,"../outputs/pdp_res_tbl_no.xlsx")
 ```
 
-```{r}
-write_xlsx(pdp_tbls,"../outputs/pdp_res_tbl_no.xlsx")
-```
 
 ## Sense checks
 
@@ -959,6 +972,7 @@ demo_vars <-
   select(-e1demoq9) %>% 
   drop_var_labs()
 
+colnames(demo_vars)
 demo_vars
 ```
 
@@ -1047,6 +1061,20 @@ demo_numeric
 ```
 
 ### Categorical
+
+Logical data types represent null columns.
+
+```{r}
+demo_vars %>% 
+  summarise(across(.fns = class)) %>% 
+  pivot_longer(cols = everything()) %>% 
+  filter(value=="logical")
+
+
+demo_vars %>% 
+  count(e1end11e2hseq34_5)
+```
+
 
 ```{r}
 demo_vars_cat <-
@@ -1215,6 +1243,7 @@ demo_numeric %>%
 demo_for_discussion
 ```
 
+Remove percent sign.
 
 ```{r}
 socio_demographic_stats %>% 
@@ -1252,38 +1281,65 @@ data_labeled %>%
 cat_cols
 ```
 
-```{r}
-segmented_obs <-
-data_raw %>% 
-  select(c("Client_ID", imp_vars_wrapper)) %>% 
-  left_join(segment_data, by = "Client_ID") %>% 
-  select(-Client_ID) %>% 
-  group_by(population, segment)
-
-segmented_obs
-```
-
 
 ```{r}
 count_df <- tibble(.rows = 0)
 
 for (col in seq_along(cat_cols)){
 df <-
-  segmented_obs %>% 
-  count(response = .data[[cat_cols[col]]], name = "frequency") %>% 
+  data_labeled %>% 
+  group_by(Population) %>% 
+  count(category = .data[[cat_cols[col]]], name = "frequency") %>% 
   mutate(variable = cat_cols[col])
 
 count_df <- rbind(count_df, df)
 }
 
-
-count_df <-
-count_df %>% 
-  left_join(data_dictionary, by = "variable") %>% 
-  select(-meta, -value)
-
-
 count_df
+```
+
+```{r}
+imp_pop_categorical <-
+count_df %>% 
+  relocate(variable, .before = everything()) %>% 
+  group_by(Population) %>% 
+  mutate(count = case_when(Population == "AGYWs" ~ 198,
+                           Population == "FSWs" ~ 200,
+                           TRUE ~ 199)) %>% 
+  mutate(prop = frequency / count,
+         perc = percent(x = prop, accuracy = 0.1)) %>% 
+  mutate(freq_perc = glue("{frequency} ({perc})")) %>% 
+  select(-count, -prop, -frequency, -perc) %>% 
+  pivot_wider(names_from = Population,
+              values_from = freq_perc)
+
+imp_pop_categorical
+```
+
+```{r}
+imp_overall_categorical <-
+count_df %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = Population,
+              values_from = frequency,
+              values_fill = 0) %>% 
+  mutate(Overall = rowSums(across(AGYWs:MSMs))) %>% 
+  mutate(prop = Overall/597,
+         perc = percent(x = prop, accuracy = 0.1),
+         freq_perc = glue("{Overall} ({perc})")) %>% 
+  select(variable, category, Overall = freq_perc, prop)
+
+imp_overall_categorical
+```
+
+```{r}
+imp_categorical <-
+imp_pop_categorical %>% 
+  left_join(imp_overall_categorical) %>% 
+  arrange(variable, desc(prop)) %>% 
+  select(-prop)
+
+imp_categorical
 ```
 
 ### Numeric varibles
@@ -1292,41 +1348,87 @@ Mean and median values
 
 ```{r}
 means_df <-
-segmented_obs %>% 
-  select(is.numeric) %>% 
-  select(-b_score) %>% 
+data_labeled %>% 
+  select(all_of(imp_vars_wrapper)) %>% 
+  select(where(is.numeric)) %>% 
+  bind_cols(Population = data_labeled$Population) %>% 
+  group_by(Population) %>% 
   summarise(across(.cols = everything(), 
                    .fns = list(mean = mean, 
-                               median = median))) %>% 
-  pivot_longer(cols = c(-population, -segment)) %>% 
+                               sd = sd))) %>% 
+  pivot_longer(cols = -Population) %>% 
   extract(col = name, 
           into = c("variable","metric"), 
           regex = "(.*)_(.*)", 
           remove = TRUE) %>% 
   pivot_wider(names_from = metric,
               values_from = value) %>% 
-  mutate(mean = round(mean, 1))
-
-
-means_df <-
-means_df %>% 
-  left_join(data_dictionary, by = "variable") %>% 
-  select(-value, -meta)
+  mutate(mean = round(mean, ROUND),
+         sd = round(sd, ROUND))
 
 means_df
+```
+
+```{r}
+imp_pop_numerical <-
+means_df %>% 
+  mutate(mean_sd = glue("{mean} ({sd})")) %>% 
+  mutate(category = "Mean +/- SD") %>% 
+  select(-mean, -sd) %>% 
+  pivot_wider(names_from = Population,
+              values_from = mean_sd)
+
+imp_pop_numerical
+```
+
+```{r}
+imp_overall_numeric <-
+data_labeled %>% 
+  select(all_of(imp_vars_wrapper)) %>% 
+  select(where(is.numeric)) %>% 
+  summarise(across(.fns = list(mean = mean,
+                               sd = sd))) %>% 
+  pivot_longer(cols = everything()) %>% 
+  extract(col = name, 
+          into = c("variable","metric"), 
+          regex = "(.*)_(.*)", 
+          remove = TRUE) %>% 
+  pivot_wider(names_from = metric,
+              values_from = value) %>% 
+  mutate(mean = round(mean, ROUND),
+         sd = round(sd, ROUND)) %>% 
+  mutate(mean_sd = glue("{mean} ({sd})")) %>% 
+  select(variable, Overall = mean_sd)
+
+imp_overall_numeric
+```
+
+```{r}
+imp_numerical <-
+imp_pop_numerical %>% 
+  left_join(imp_overall_numeric)
+
+imp_numerical
 ```
 
 
 ```{r}
 imp_vars_desc <-
-  bind_rows(count_df, means_df) %>% 
-  rename(category = response) %>% 
-  arrange(variable, population, segment)
+imp_categorical %>% 
+  drop_var_labs() %>% 
+  bind_rows(imp_numerical) %>% 
+  left_join(data_dictionary, by = "variable") %>% 
+  select(-value, -meta)
 
 imp_vars_desc
-write_xlsx(x = imp_vars_desc, path = "../outputs/imp_vars_desc.xlsx")
+#write_xlsx(x = imp_vars_desc, path = "../outputs/imp_vars_desc.xlsx")
 ```
 
+```{r}
+imp_vars_desc %>% 
+  filter(variable %in% imp_vars_wrapper[1:10]) %>% 
+  write_xlsx("../outputs/top_10_imp.xlsx")
+```
 
 
 ```{r}
@@ -1335,6 +1437,17 @@ data_raw %>%
   mutate(Continuation_rates = relevel(x = Continuation_rates, ref = "No continuation")) %>% 
   ggplot(aes(Continuation_rates)) +
   geom_histogram(stat = "count")
+```
+
+# PERSONAS
+
+```{r}
+data_labeled %>% 
+  select(-b_score, -b_group, -b_segment) %>% 
+  drop_var_labs() %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  select(-population) %>% 
+  write_xlsx("../outputs/persona_data.xlsx")
 ```
 
 # EXPORT
