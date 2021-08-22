@@ -188,6 +188,10 @@ data_dictionary <- create_dictionary(x = data_labeled)
 
 data_dictionary
 #write_xlsx(x = data_dictionary, path = "../outputs/data_dictionary.xlsx")
+
+data_dictionary_updated <- read_excel(path = "../../Dashboard/data_dictionary_updated.xlsx")
+
+data_dictionary_updated
 ```
 
 
@@ -311,6 +315,19 @@ data_labeled %>%
                                        replacement = "Undecided/ Don’t know"))
 
 unique(data_labeled$e1end11e2hseq32)
+
+data_labeled
+```
+
+## Likert variables
+
+Change Likert scale variables to categorical variables. This is for purposes of summary statistics.
+
+```{r}
+data_labeled <-
+data_labeled %>%
+  mutate(across(.cols = behave_vars$variable,
+                .fns = as.character))
 
 data_labeled
 ```
@@ -1441,6 +1458,10 @@ data_raw %>%
 
 # PERSONAS
 
+## Persona data
+
+This will be used for Power BI dashboards.
+
 ```{r}
 data_labeled %>% 
   select(-b_score, -b_group, -b_segment) %>% 
@@ -1450,17 +1471,145 @@ data_labeled %>%
   write_xlsx("../outputs/persona_data.xlsx")
 ```
 
+## Summary stats
+
+Summary statistics for the personas (socio-demographic characteristics and most important variables)
+
+```{r}
+personas_desc <-
+data_labeled %>% 
+  select(-b_score, -b_group, -b_segment) %>% 
+  drop_var_labs() %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  select(-population) %>% 
+  select(all_of(c(colnames(demo_vars),imp_vars_wrapper,"b_score", "segment")))
+
+# Select only numeric and character columns and group our data appropriately
+personas_proc <- 
+  personas_desc %>% 
+  select(-where(is.logical)) %>% 
+  group_by(Population, segment)
+
+personas_proc
+```
+
+```{r}
+personas_proc %>%
+  summarise(across(.cols = is.numeric, 
+                   .fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               sd = ~sd(x = ., na.rm = TRUE))))
+
+personas_proc %>% 
+  count(personas_proc[[57]]) %>% 
+  mutate(variable = colnames(personas_proc)[57])
+```
+Categorical variables
+
+```{r}
+persona_cat <- tibble(.rows = 0)
+
+for (var in seq_along(colnames(personas_proc))){
+  
+  if (class(personas_proc[[var]]) == "character"){
+    
+    persona_df <-
+    personas_proc %>% 
+      count(personas_proc[[var]]) %>% 
+      mutate(variable = colnames(personas_proc[var])) %>% 
+      set_names(c("Population", "segment", "category", "Freq", "variable"))
+    
+    persona_cat <- bind_rows(persona_cat, persona_df)
+    
+  } 
+}
+
+persona_cat
+```
+Numeric variables.
+
+```{r}
+persona_tbl <-
+personas_proc %>%
+  summarise(across(.cols = is.numeric, 
+                   .fns = list(mean = ~mean(x = ., na.rm = TRUE),
+                               sd = ~sd(x = ., na.rm = TRUE)))) %>% 
+  pivot_longer(cols = c(-Population, -segment)) %>% 
+  extract(col = name, 
+          into = c("variable", "metric"), 
+          regex = "(.*)_(.*)", 
+          remove = TRUE, 
+          convert = TRUE) %>% 
+  pivot_wider(names_from = metric,
+              values_from = value) %>% 
+  mutate(across(.cols = c(mean, sd), .fns = ~round(x = ., digits = ROUND))) %>% 
+  mutate(category = "Mean +/- SD") %>% 
+  bind_rows(persona_cat)
+
+persona_tbl
+```
+
+```{r}
+personas_sizes <-
+personas_proc %>% 
+  select(Population, segment) %>% 
+  count(segment)
+
+personas_sizes
+```
+
+Formatted table.
+
+```{r}
+persona_stats <-
+persona_tbl %>% 
+  left_join(personas_sizes, by = c("Population","segment")) %>% 
+  left_join(data_dictionary_updated, by = "variable") %>% 
+  mutate(prop = Freq/n,
+         perc = percent(x = prop, accuracy = 0.1),
+         freq_perc = glue("{Freq} ({perc})"),
+         freq_perc = na_if(x = freq_perc, y = "NA (NA)")) %>% 
+  mutate(mean_sd = glue("{mean} ({sd})")) %>% 
+  mutate(stat = coalesce(freq_perc, mean_sd)) %>% 
+  select(Population, segment, category, variable, stat, label) %>% 
+  pivot_wider(names_from = segment,
+              values_from = stat) %>% 
+  arrange(Population, variable) %>% 
+  relocate(label, .after = everything())
+
+persona_stats
+#write_xlsx(x = persona_stats, path = "../outputs/persona_stats.xlsx")
+```
+
+
+```{r}
+persona_analysed <-
+read_excel(path = "../outputs/persona_stats.xlsx", 
+           sheet = "Sheet2") %>% 
+  select(variable, type) %>% 
+  filter(!is.na(type))
+
+persona_discussed <-
+persona_stats %>% 
+  left_join(persona_analysed, by = "variable") %>% 
+  filter(!is.na(type)) %>% 
+  select(Population, variable, type, category, "1", "2", label) %>% 
+  arrange(Population, type, variable)
+
+persona_discussed
+#write_xlsx(x = persona_discussed, path = "../outputs/persona_discussed.xlsx")
+```
+
 # EXPORT
 
 ```{r}
-save.image("../outputs/08Aug.RData")
+save.image("../outputs/22Aug.RData")
 ```
 
 
 ```{r}
 rm(list = ls())
 
-load("../outputs/08Aug.RData")
+load("../outputs/12Aug.RData")
 ```
 
 
