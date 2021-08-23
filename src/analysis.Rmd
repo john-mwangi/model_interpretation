@@ -1503,7 +1503,8 @@ personas_proc %>%
   count(personas_proc[[57]]) %>% 
   mutate(variable = colnames(personas_proc)[57])
 ```
-Categorical variables
+
+### Categorical variables
 
 ```{r}
 persona_cat <- tibble(.rows = 0)
@@ -1525,7 +1526,8 @@ for (var in seq_along(colnames(personas_proc))){
 
 persona_cat
 ```
-Numeric variables.
+
+### Numeric variables
 
 ```{r}
 persona_tbl <-
@@ -1557,7 +1559,9 @@ personas_proc %>%
 personas_sizes
 ```
 
-Formatted table.
+### Formatted tables
+
+All summary statistics.
 
 ```{r}
 persona_stats <-
@@ -1580,6 +1584,7 @@ persona_stats
 #write_xlsx(x = persona_stats, path = "../outputs/persona_stats.xlsx")
 ```
 
+To go into the report.
 
 ```{r}
 persona_analysed <-
@@ -1599,17 +1604,176 @@ persona_discussed
 #write_xlsx(x = persona_discussed, path = "../outputs/persona_discussed.xlsx")
 ```
 
+## FSWs
+
+### Expanded questions
+
+Expand the criteria for FSW to the entire survey and check for major differences.
+
+Numeric variables: no major differences exist apart from the behavioural score.
+
+```{r}
+# Numeric variables - check for differences in the means
+data_labeled %>%
+  select(-b_score, -b_group) %>% 
+  filter(Population=="FSWs") %>% 
+  drop_var_labs() %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  mutate(segment = as.numeric(segment)) %>% 
+  select(where(is.numeric)) %>% 
+  group_by(segment) %>% 
+  summarise(across(.cols = everything(), .fns = ~mean(x = ., na.rm = TRUE))) %>% 
+  pivot_longer(cols = -segment) %>% 
+  mutate(value = round(value, ROUND)) %>% 
+  pivot_wider(names_from = segment,
+              values_from = value) %>% 
+  rename(segment_1 = "1",
+         segment_2 = "2") %>% 
+  mutate(difference = abs(segment_1 - segment_2)) %>% 
+  arrange(desc(difference))
+```
+
+```{r}
+# Categorical variables - check differences in proportions
+fsw_categorical <-
+data_labeled %>%
+  select(-b_score, -b_group, -b_segment) %>% 
+  filter(Population=="FSWs") %>% 
+  drop_var_labs() %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  select(where(is.character)) %>% 
+  select(-c(Population:enum)) %>% 
+  group_by(segment)
+
+fsw_categorical %>% 
+  count(Clinic)
+```
+
+
+```{r}
+fsw_tbl <- tibble(.rows = 0)
+
+for(cat in seq_along(colnames(fsw_categorical))){
+  fsw_df <-
+  fsw_categorical %>% 
+    count(fsw_categorical[[cat]]) %>% 
+    set_names(c("segment","category","n")) %>% 
+    mutate(variable = colnames(fsw_categorical)[cat])
+  
+  fsw_tbl <- rbind(fsw_tbl, fsw_df)
+}
+
+fsw_tbl
+
+personas_sizes
+```
+
+
+```{r}
+fsw_tbl %>% 
+  left_join(personas_sizes %>% 
+              filter(Population=="FSWs"), by = "segment") %>% 
+  rename(n = n.x,
+         size = n.y) %>% 
+  mutate(prop = n/size) %>% 
+  select(-n, -size, -Population) %>% 
+  pivot_wider(names_from = segment,
+              values_from = prop) %>% 
+  rename(segment_1 = "1",
+         segment_2 = "2") %>% 
+  replace_na(replace = list(segment_1 = 0, segment_2 = 0)) %>% 
+  mutate(difference = abs(segment_1 - segment_2)) %>% 
+  arrange(desc(difference)) %>% 
+  left_join(data_dictionary_updated, by = "variable") %>% 
+  View()
+```
+
+### Likert questions
+
+Create scores for Likert scales questions.
+
+```{r}
+likert_ques <-
+persona_analysed %>% 
+  filter(type %in% c("Conscientiousness","Peer Influence")) %>% 
+  pull(variable)
+
+likert_ques
+```
+
+```{r}
+likert_func <- function(x){
+  case_when(x=="strongly agree" ~ 1,
+            x=="agree" ~ 2,
+            x=="neutral" ~ 3,
+            x=="disagree" ~ 4,
+            x=="strongly disagree" ~ 5,
+            TRUE ~ 6)
+}
+
+peer_influence_df <-
+data_labeled %>% 
+  select(e1end11e2rand3_q125:e1end11e2rand3_q129) %>% 
+  map_df(.x = ., .f = list(str_squish, str_to_lower, likert_func))
+
+peer_influence_df
+```
+
+```{r}
+conscientiousness_df <-
+data_labeled %>% 
+  select(careless:happen_happen) %>% 
+  map_df(as.numeric)
+
+conscientiousness_df
+```
+
+The lower the score the more conscientious the individual.
+
+```{r}
+consc_score <-
+conscientiousness_df %>% 
+  select(any_of(likert_ques)) %>% 
+  mutate(consc_score = rowSums(across(everything()))) %>% 
+  select(consc_score)
+
+consc_score
+```
+
+The lower the score the more the individual is influenced by peers.
+
+```{r}
+peer_score <-
+peer_influence_df %>% 
+  select(any_of(likert_ques)) %>% 
+  mutate(peer_score = rowSums(across(everything()))) %>% 
+  select(peer_score)
+
+peer_score
+```
+
+```{r}
+data_labeled %>% 
+  select(-b_score, -b_group, -b_segment) %>% 
+  drop_var_labs() %>% 
+  left_join(segment_data, by = "Client_ID") %>% 
+  select(-population) %>% 
+  cbind(consc_score, peer_score) %>% 
+  write_xlsx("../../Dashboard/persona_data.xlsx")
+```
+
+
 # EXPORT
 
 ```{r}
-save.image("../outputs/22Aug.RData")
+save.image("../outputs/24Aug.RData")
 ```
 
 
 ```{r}
 rm(list = ls())
 
-load("../outputs/12Aug.RData")
+load("../outputs/22Aug.RData")
 ```
 
 
